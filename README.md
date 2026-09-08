@@ -19,7 +19,7 @@ $$\text{Prize Money } := 500,000€ \times \left(1 - \frac{S}{L}\right)$$
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Official Leaderboard Record (`fx2-cmix`)** | Kaido Orav & Byron Knoll | Sep 2024 | 110,333,190 B | 459,938 B | 110,793,128 B | Baseline ($L_0$) | — |
 | **Candidate Baseline (`cmix-lex`)** | Ibrahim Marcouch | 2024 | 109,190,109 B | 459,938 B | 109,650,047 B | 1.032% | ~5,158 € |
-| **hifi-cmix (This Work)** | **axfrgo & Ibrahim Marcouch** | **Sep 2026** | **107,679,733 B** | **440,175 B** | **108,119,908 B** | **2.413%** | **12,064 €** |
+| **hifi-cmix (This Work)** | **axfrgo** | **Sep 2026** | **107,679,733 B** | **440,175 B** | **108,119,908 B** | **2.413%** | **12,064 €** |
 
 ### Net Savings Highlights
 - **Reduction vs. Official World Record**: **2,673,220 bytes** ($2.413\%$)
