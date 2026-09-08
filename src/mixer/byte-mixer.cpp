@@ -20,6 +20,26 @@ void ByteMixer::SetInput(int index, float val) {
 }
 
 void ByteMixer::ByteUpdate() {
+#if CMIX_FAST_BYTE_MIXER
+  // Fast branch: use the already-computed byte-model mixture directly. This
+  // removes the recurrent LSTM update while keeping the same causal interface
+  // and decoder-synchronized byte boundary.
+  const float total = inputs_.sum();
+  offset_ = 0;
+  for (int i = 0; i < 256; ++i) {
+    if (vocab_[i]) {
+      probs_[i] = total > 0.0f ? inputs_[offset_] / total :
+          1.0f / static_cast<float>(vocab_size_);
+      ++offset_;
+    } else {
+      probs_[i] = 0.0f;
+    }
+  }
+  inputs_ = 0;
+  offset_ = 0;
+  ByteModel::ByteUpdate();
+  return;
+#else
   inputs_ *= 2 / num_models_;
   lstm_->SetInput(inputs_);
   inputs_ = 0;
@@ -35,4 +55,5 @@ void ByteMixer::ByteUpdate() {
   }
   offset_ = 0;
   ByteModel::ByteUpdate();
+#endif
 }

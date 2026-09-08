@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <malloc.h>
+#include <unistd.h>
 
 #include "preprocess/preprocessor.h"
 #include "coder/encoder.h"
@@ -28,7 +29,7 @@ namespace {
 }
 
 int Help() {
-  printf("cmix-lex\n");
+  printf("hifi-cmix\n");
   printf("Compress:\n");
   printf("    to compress enwik9: cmix -e enwik9 [output]\n");
   printf("    to create a header for hutter prize: cmix -h comp_dict_size comp_new_order_size decomp_input_size\n");
@@ -403,7 +404,10 @@ int main(int argc, char** argv) {
 
     // merge all input parts after preprocessing
     cat(".intro_decomp", ".main_decomp_restored_sorted", "un1_d");
-    cat("un1_d", ".coda_decomp", "enwik9_uncompressed");
+    cat("un1_d", ".coda_decomp", "data9");
+    if (link("data9", "enwik9_uncompressed") != 0) {
+      symlink("data9", "enwik9_uncompressed");
+    }
 
     goto print_end_message;
   }

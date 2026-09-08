@@ -24,6 +24,7 @@ struct TailBlock {
   size_t original_index = 0; std::vector<LineRef> lines; std::string sort_key;
 };
 struct SideMeta {
+  size_t tail_len = 0;
   size_t r0_count = 0, r1_count = 0, r2_count = 0;
   size_t prelude_count = 0, suffix_count = 0;
   std::vector<size_t> sorted_to_original;
@@ -34,8 +35,11 @@ const unsigned char kFooterMagic[] = {'R', '1', 'O', 'R', 'D', 'F', 'T', 'R'};
 const unsigned char kD99Line[] = {0xDF, 0x99, 'N'};
 const unsigned char kD86Prefix[] = {0xDF, 0x86, 'N'};
 
-const size_t kEncodedTailStart = 541126651, kEncodedTailLen = 45332670;
-const size_t kEncodedRegime1Start = 13599801, kEncodedRegime2Start = 30372888;
+const size_t kEncodedTailStart = 541126651;
+const size_t kExpectedR0Lines = 526364;
+const size_t kExpectedR1Lines = 2001835;
+const size_t kExpectedR2Lines = 614080;
+const size_t kExpectedTotalTailLines = kExpectedR0Lines + kExpectedR1Lines + kExpectedR2Lines;
 
 bool SizeTFromU64(uint64_t value, size_t* out) {
   if (value > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) return false;
@@ -259,16 +263,11 @@ bool ReadLehmerPermutation(const std::vector<unsigned char>& data, size_t* pos,
 
 bool PartitionTailLines(const std::vector<LineRef>& lines, size_t* r0_count,
     size_t* r1_count, size_t* r2_count) {
-  *r0_count = *r1_count = *r2_count = 0;
-  size_t pos = 0;
-  for (const LineRef& line : lines) {
-    if (pos < kEncodedRegime1Start) ++*r0_count;
-    else if (pos < kEncodedRegime2Start) ++*r1_count;
-    else ++*r2_count;
-    if (line.len > kEncodedTailLen - pos) return false;
-    pos += line.len;
-  }
-  return pos == kEncodedTailLen;
+  if (lines.size() != kExpectedTotalTailLines) return false;
+  *r0_count = kExpectedR0Lines;
+  *r1_count = kExpectedR1Lines;
+  *r2_count = kExpectedR2Lines;
+  return true;
 }
 
 size_t GuessLastHugeBlockEnd(const std::vector<unsigned char>& data,
@@ -337,9 +336,10 @@ bool ComputeD86aOrder(const std::vector<unsigned char>& data,
 
 bool MakeSide(const std::vector<unsigned char>& data,
     const std::vector<TailBlock>& blocks,
-    const std::vector<size_t>& sorted_indices, size_t r0_count,
-    size_t r1_count, size_t r2_count, size_t prelude_count,
-    size_t suffix_count, std::vector<unsigned char>* side) {
+    const std::vector<size_t>& sorted_indices, size_t tail_len,
+    size_t r0_count, size_t r1_count, size_t r2_count,
+    size_t prelude_count, size_t suffix_count,
+    std::vector<unsigned char>* side) {
   std::vector<uint64_t> d86a(sorted_indices.size(), 0);
   for (size_t sorted_pos = 0; sorted_pos < sorted_indices.size(); ++sorted_pos) {
     const size_t index = sorted_indices[sorted_pos];
@@ -364,7 +364,7 @@ bool MakeSide(const std::vector<unsigned char>& data,
   side->clear();
   side->reserve(32 + original_by_d86a.size() * 3);
   side->insert(side->end(), kSideMagicD86, kSideMagicD86 + sizeof(kSideMagicD86));
-  AppendVarint(side, kEncodedTailLen);
+  AppendVarint(side, tail_len);
   AppendVarint(side, r0_count);
   AppendVarint(side, r1_count);
   AppendVarint(side, r2_count);
@@ -379,13 +379,14 @@ bool ParseSide(const std::vector<unsigned char>& side, SideMeta* meta) {
   size_t pos = sizeof(kSideMagicD86);
   uint64_t tail_len = 0, r0 = 0, r1 = 0, r2 = 0, prelude = 0, suffix = 0;
   uint64_t count = 0;
-  if (!ReadVarint(side, &pos, &tail_len) || tail_len != kEncodedTailLen ||
+  if (!ReadVarint(side, &pos, &tail_len) ||
       !ReadVarint(side, &pos, &r0) || !ReadVarint(side, &pos, &r1) ||
       !ReadVarint(side, &pos, &r2) || !ReadVarint(side, &pos, &prelude) ||
       !ReadVarint(side, &pos, &suffix) || !ReadVarint(side, &pos, &count)) {
     return false;
   }
-  if (!SizeTFromU64(r0, &meta->r0_count) ||
+  if (!SizeTFromU64(tail_len, &meta->tail_len) ||
+      !SizeTFromU64(r0, &meta->r0_count) ||
       !SizeTFromU64(r1, &meta->r1_count) ||
       !SizeTFromU64(r2, &meta->r2_count) ||
       !SizeTFromU64(prelude, &meta->prelude_count) ||
@@ -401,11 +402,11 @@ bool ParseSide(const std::vector<unsigned char>& side, SideMeta* meta) {
   return pos == side.size();
 }
 
-bool SplitActiveTail(const std::vector<unsigned char>& data,
+bool SplitActiveTail(const std::vector<unsigned char>& data, size_t tail_len,
     std::vector<LineRef>* r0, std::vector<LineRef>* r1,
     std::vector<LineRef>* r2) {
   const std::vector<LineRef> lines =
-      SplitLines(kEncodedTailStart, kEncodedTailLen, data);
+      SplitLines(kEncodedTailStart, tail_len, data);
   size_t r0_count = 0, r1_count = 0, r2_count = 0;
   if (!PartitionTailLines(lines, &r0_count, &r1_count, &r2_count)) return false;
   r0->assign(lines.begin(), lines.begin() + r0_count);
@@ -420,16 +421,17 @@ bool ReorderEncodedTailFile(const std::string& path,
     const std::string& side_path) {
   std::vector<unsigned char> input;
   if (!ReadFile(path, &input)) return false;
-  if (input.size() != kEncodedTailStart + kEncodedTailLen) {
+  if (input.size() <= kEncodedTailStart) {
     std::fprintf(stderr,
-        "\nr1 encoded tail reorder refused: stream=%zu expected=%zu\n",
-        input.size(), kEncodedTailStart + kEncodedTailLen);
+        "\nr1 encoded tail reorder refused: stream=%zu too small\n",
+        input.size());
     return false;
   }
+  const size_t tail_len = input.size() - kEncodedTailStart;
 
   std::vector<LineRef> r0, r1, r2, prelude, suffix;
   std::vector<TailBlock> blocks;
-  if (!SplitActiveTail(input, &r0, &r1, &r2) ||
+  if (!SplitActiveTail(input, tail_len, &r0, &r1, &r2) ||
       !ParseTailBlocks(input, r1, &prelude, &blocks, &suffix)) {
     return false;
   }
@@ -444,7 +446,7 @@ bool ReorderEncodedTailFile(const std::string& path,
       });
 
   std::vector<unsigned char> side;
-  if (!MakeSide(input, blocks, sorted_indices, r0.size(), r1.size(), r2.size(),
+  if (!MakeSide(input, blocks, sorted_indices, tail_len, r0.size(), r1.size(), r2.size(),
           prelude.size(), suffix.size(), &side) ||
       !WriteFile(side_path, side)) {
     return false;
@@ -466,7 +468,7 @@ bool ReorderEncodedTailFile(const std::string& path,
 
   std::fprintf(stderr,
       "\nr1 encoded tail reorder: stream=%zu->%zu tail=%zu side=%zu r0=%zu r1=%zu r2=%zu prelude=%zu suffix=%zu blocks=%zu order=payload_lex side=d86a_lehmer stage=post_wrt\n",
-      input.size(), output.size(), kEncodedTailLen, side.size(), r0.size(),
+      input.size(), output.size(), tail_len, side.size(), r0.size(),
       r1.size(), r2.size(), prelude.size(), suffix.size(), blocks.size());
   return true;
 }
@@ -499,17 +501,17 @@ bool RestoreEncodedTailFile(const std::string& path,
   std::vector<unsigned char> input;
   std::vector<unsigned char> side;
   if (!ReadFile(path, &input) || !ReadFile(side_path, &side)) return false;
-  if (input.size() != kEncodedTailStart + kEncodedTailLen) {
+  SideMeta meta;
+  if (!ParseSide(side, &meta)) return false;
+  if (input.size() != kEncodedTailStart + meta.tail_len) {
     std::fprintf(stderr,
         "\nr1 encoded tail restore refused: stream=%zu expected=%zu\n",
-        input.size(), kEncodedTailStart + kEncodedTailLen);
+        input.size(), kEncodedTailStart + meta.tail_len);
     return false;
   }
 
-  SideMeta meta;
-  if (!ParseSide(side, &meta)) return false;
   std::vector<LineRef> lines =
-      SplitLines(kEncodedTailStart, kEncodedTailLen, input);
+      SplitLines(kEncodedTailStart, meta.tail_len, input);
   if (lines.size() != meta.r0_count + meta.r1_count + meta.r2_count) {
     return false;
   }
@@ -562,7 +564,7 @@ bool RestoreEncodedTailFile(const std::string& path,
 
   std::fprintf(stderr,
       "\nr1 encoded tail restore: stream=%zu tail=%zu side=%zu blocks=%zu order=payload_lex_restored side=%s stage=post_wrt\n",
-      output.size(), kEncodedTailLen, side.size(), sorted_blocks.size(),
+      output.size(), meta.tail_len, side.size(), sorted_blocks.size(),
       "d86a_lehmer");
   return true;
 }

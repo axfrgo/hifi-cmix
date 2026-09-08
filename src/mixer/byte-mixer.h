@@ -7,6 +7,10 @@
 #include "../models/byte-model.h"
 #include "lstm.h"
 
+#ifndef CMIX_FAST_BYTE_MIXER
+#define CMIX_FAST_BYTE_MIXER 0
+#endif
+
 class ByteMixer : public ByteModel {
  public:
   ByteMixer(unsigned int num_models, const unsigned int& bit_context,

@@ -2,6 +2,10 @@
 #define MIXER_H
 
 #include <vector>
+
+#ifndef CMIX_MIXER_CONTEXT_CACHE
+#define CMIX_MIXER_CONTEXT_CACHE 1
+#endif
 #include <valarray>
 #include "../ds/emhash_map.hpp"
 #include <memory>
@@ -37,6 +41,10 @@ class Mixer {
   unsigned long long /*max_steps_,*/ steps_;
   emhash6::HashMap<unsigned int, ContextData> context_map_;
   ContextData context_base_;
+  // Mix() and Perceive() are called as a strict pair.  Retain the context
+  // selected by Mix() so Perceive() does not repeat the same hash lookup.
+  // This is output-neutral: no context insertion or weight update changes.
+  ContextData* last_data_;
 };
 
 #endif

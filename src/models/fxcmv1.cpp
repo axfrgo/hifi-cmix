@@ -33,6 +33,10 @@
 #include <math.h>
 #include <ctype.h>
 #include <algorithm>
+
+#ifndef CMIX_EXTRA_SPARSE_MATCH
+#define CMIX_EXTRA_SPARSE_MATCH 0
+#endif
 #include <unordered_map>
 #include <memory>
 #include <stdint.h>
@@ -252,7 +256,11 @@ struct BlockData {
     }
 };
 
+#if CMIX_EXTRA_SPARSE_MATCH
+BlockData<560> x; //maintains current global data block
+#else
 BlockData<544> x; //maintains current global data block
+#endif
 
 // ilog(x) = round(log2(x) * 16), 0 <= x < 256
 U8 ilog[256];
@@ -722,7 +730,7 @@ for (int i=0; i<n; ++i) {
         err=32767;
         if (err<-32768)
         err=-32768;
-        if(err>=-elim && err<=elim) err=0;
+        if(err>=-elim && err<=elim) return;
         train(&tx[0], &wx[cxt*N], N, err);
     }
 
@@ -1078,6 +1086,28 @@ inline U32 getStateByteLocation(const int bpos, const int c0) {
 }
 
 #define MAXCXT 8
+#ifndef CMIX_E1_RECENT_CACHE
+#define CMIX_E1_RECENT_CACHE 0
+#endif
+#ifndef CMIX_INLINE_CONTEXT_MIX
+#define CMIX_INLINE_CONTEXT_MIX 0
+#endif
+#ifndef CMIX_INLINE_DIRECT_STATE
+#define CMIX_INLINE_DIRECT_STATE 0
+#endif
+#ifndef CMIX_E1_SIMD_SCAN
+#define CMIX_E1_SIMD_SCAN 1
+#endif
+#if CMIX_INLINE_CONTEXT_MIX
+#define CMIX_CONTEXT_MIX_ATTR inline __attribute__((always_inline))
+#else
+#define CMIX_CONTEXT_MIX_ATTR __attribute__ ((noinline))
+#endif
+#if CMIX_INLINE_DIRECT_STATE
+#define CMIX_DIRECT_STATE_SET_ATTR inline __attribute__((always_inline))
+#else
+#define CMIX_DIRECT_STATE_SET_ATTR inline
+#endif
 inline U16 InitialContextMask(const int c) {
     return c>1 ? U16(0) : U16(0xfffe);
 }
@@ -1102,8 +1132,43 @@ union  E1 {  // hash element, 64 bytes
         const int recent0 = last & 15;
         const int recent1 = last >> 4;
         if (recent0 < A && chk[recent0]==ch) return &bh[recent0][0];
+#if CMIX_E1_RECENT_CACHE
+        // `last` also records the previous slot. Check it before scanning the
+        // full table; this preserves the loop's recency update on a hit.
+        if (recent1 < A && recent1 != recent0 && chk[recent1]==ch) {
+            last = (last<<4) | recent1;
+            return &bh[recent1][0];
+        }
+#endif
         int b=0xffff, bi=0;
 
+#if CMIX_E1_SIMD_SCAN
+        // E1 is instantiated with A=14.  Check the 14 contiguous 16-bit
+        // checksums in two SIMD loads, preserving the scalar loop's
+        // lowest-index match order.  The priority scan below is unchanged
+        // for misses, so replacement and recency state remain identical.
+        if (A >= 8) {
+            const XMM target = _mm_set1_epi16(static_cast<short>(ch));
+            const XMM c0 = _mm_loadu_si128(reinterpret_cast<const XMM*>(chk));
+            int mask0 = _mm_movemask_epi8(_mm_cmpeq_epi16(c0, target));
+            if (mask0) {
+                const int i = __builtin_ctz(static_cast<unsigned>(mask0)) >> 1;
+                if (i < A) {
+                    last = (last<<4) | i;
+                    return (U8*)&bh[i][0];
+                }
+            }
+            const XMM c1 = _mm_loadu_si128(reinterpret_cast<const XMM*>(chk+8));
+            int mask1 = _mm_movemask_epi8(_mm_cmpeq_epi16(c1, target));
+            const int valid = (1 << ((A-8)*2)) - 1;
+            mask1 &= valid;
+            if (mask1) {
+                const int i = 8 + (__builtin_ctz(static_cast<unsigned>(mask1)) >> 1);
+                last = (last<<4) | i;
+                return (U8*)&bh[i][0];
+            }
+        }
+#endif
         for (int i=0; i<A; ++i) {
             if (chk[i]==ch) {
                 last = (last<<4) | i;
@@ -1286,7 +1351,7 @@ struct ContextMap3 {
         x.mxInputs1.add(0);
     }
     // Update the model with bit y1, and predict next bit to mixer m.
-    int __attribute__ ((noinline)) mix() {
+    int CMIX_CONTEXT_MIX_ATTR mix() {
         // Update model with y
         result=0;
         upd(); // update statemap
@@ -2209,7 +2274,9 @@ struct WordsContext {
 // Similar sentences are calculated at runtime comparing
 // words dictionary index sum differences. Asuming we have
 // similar sentences with small differences, currently limited to 53.
+#ifndef SIMILARWORDS
 #define SIMILARWORDS 64
+#endif
 struct SentenceContext {
     WordsContext sentence[SIMILARWORDS]; // List of sentences, max 64
     WordsContext empty;        // blank
@@ -3561,7 +3628,7 @@ struct DirectStateMap {
         memset(cxt, 0, count*sizeof(U32));
         index=pu=0;
     }
-    void set(U32 cx,int y) {
+    CMIX_DIRECT_STATE_SET_ATTR void set(U32 cx,int y) {
         assert(cxt[index]>=0 && cxt[index]<=mask);
         assert(index<count);
         CxtState[cxt[index]]=next(CxtState[cxt[index]],y);       // update state
@@ -3845,6 +3912,9 @@ void PredictorInit() {
     rcmA[0].Init(1*4096*4096,6);
 
     x.mxInputs1.ncount=544;
+#if CMIX_EXTRA_SPARSE_MATCH
+    x.mxInputs1.ncount=546;
+#endif
     x.mxInputs2.ncount=32;
     x.mxInputs4.ncount=16;
 
@@ -4237,6 +4307,102 @@ int MatchModel2mix() {
   }
   return length;
 }
+
+#if CMIX_EXTRA_SPARSE_MATCH
+// Upstream PAQ/fx2-cmix style short sparse match predictor.  It keeps four
+// decoder-synchronized hash histories whose bytes are sampled at different
+// strides.  The table is bounded and contains no corpus-derived side data.
+struct SparseMatchModel {
+  static constexpr U32 kHashes = 4;
+  static constexpr U32 kTableSize = 1u << 20;
+  struct Config { U32 stride; U32 min_length; };
+  const Config config[kHashes] = {{1, 3}, {1, 4}, {2, 6}, {1, 5}};
+  // Zeroed explicitly in Init() so the large history stays in BSS rather
+  // than becoming a multi-megabyte file initializer.
+  U32 table[kTableSize];
+  U32 hashes[kHashes] = {};
+  U32 priority[kHashes] = {0, 1, 2, 3};
+  U32 length = 0;
+  U32 index = 0;
+  U8 expected_byte = 0;
+  bool valid = false;
+
+  void Init() {
+    memset(table, 0, sizeof(table));
+    memset(hashes, 0, sizeof(hashes));
+    priority[0] = 0; priority[1] = 1; priority[2] = 2; priority[3] = 3;
+    length = index = 0;
+    expected_byte = 0;
+    valid = false;
+  }
+
+  void Update() {
+    for (U32 i = 0; i < kHashes; ++i) {
+      U32 h = (i + 1) * 191;
+      U32 offset = 1;
+      for (U32 j = 0; j < config[i].min_length; ++j,
+          offset += config[i].stride) {
+        h = h * 191 + buf(static_cast<int>(offset));
+      }
+      hashes[i] = h & (kTableSize - 1);
+    }
+
+    if (length != 0) {
+      ++index;
+      if (length < 64) ++length;
+    } else {
+      for (U32 rank = 0; rank < kHashes; ++rank) {
+        const U32 i = priority[rank];
+        const U32 candidate = table[hashes[i]];
+        if (candidate == 0) continue;
+        U32 offset = 1;
+        U32 matched = 0;
+        while (matched < config[i].min_length && candidate > offset &&
+            buf(static_cast<int>(offset)) ==
+                bufr(static_cast<int>(candidate - offset))) {
+          ++matched;
+          offset += config[i].stride;
+        }
+        if (matched >= config[i].min_length) {
+          length = matched - (config[i].min_length - 1);
+          index = candidate;
+          if (rank != 0) {
+            for (U32 j = rank; j > 0; --j) priority[j] = priority[j - 1];
+            priority[0] = i;
+          }
+          break;
+        }
+      }
+    }
+
+    for (U32 i = 0; i < kHashes; ++i) table[hashes[i]] = pos;
+    expected_byte = length ? bufr(static_cast<int>(index)) : 0;
+    valid = length > 1;
+  }
+
+  void Predict() {
+    if (x.bpos == 0) Update();
+    const U8 current = static_cast<U8>(x.c0 << (8 - x.bpos));
+    if (length != 0 && ((expected_byte ^ current) >> (8 - x.bpos)) != 0) {
+      length = 0;
+      valid = false;
+    }
+    if (valid && length > 1) {
+      const int expected_bit = (expected_byte >> (7 - x.bpos)) & 1;
+      const int sign = 2 * expected_bit - 1;
+      x.mxInputs1.add(sign * (std::min<U32>(length - 1, 32) << 5));
+      x.mxInputs1.add(sign *
+          ((1u << std::min<U32>(length - 2, 3)) *
+           std::min<U32>(length - 1, 8) << 4));
+    } else {
+      x.mxInputs1.add(0);
+      x.mxInputs1.add(0);
+    }
+  }
+};
+
+SparseMatchModel sparse_match_model;
+#endif
 
 int buffer1(int i){
     return cwbuf[(cwpos-i)&CBMASK];
@@ -5517,6 +5683,9 @@ int modelPrediction() {
     scmA[2].mix(sscmrate);
   
     isMatch=MatchModel2mix();
+#if CMIX_EXTRA_SPARSE_MATCH
+    sparse_match_model.Predict();
+#endif
     
     // Order X
     ordX=0;
@@ -5848,6 +6017,9 @@ inline Predictor::Predictor()  {
 
     InitIlog();
     x.Init();
+#if CMIX_EXTRA_SPARSE_MATCH
+    sparse_match_model.Init();
+#endif
 
     for (int i=0;i<4096;i++)
         st2_p1[i]=clp(sc(13*(i - 2048)));

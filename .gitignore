@@ -1,0 +1,87 @@
+# Binaries
+cmix
+cmix_orig
+archive9
+archive9*
+remap
+preprocess_roundtrip
+
+# Object files & Libraries
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+
+# Temporary memory map and scratch files
+*.temp
+*.tmp
+*.dat
+*.cmix.temp
+ppm.temp
+*.comp
+*.cmix
+comp_dict
+comp_order
+
+# Logs and test outputs
+*.log
+*.stderr
+*.stdout
+*.out
+*.time
+*.progress
+*.tsv
+
+# Profiling and PGO data
+pgo_data/
+*.profdata
+*.profraw
+gmon.out
+
+# Run directory artifacts
+run/
+!run/.gitkeep
+
+# Tools binaries
+tools/upx
+tools/upx-5.1.1-amd64_linux/
+tools/upx-*.tar.xz
+
+# Test directories & intermediate slices
+prof_input/r0_test*
+prof_input/*.bin
+bench_work/
+cand*
+cache*
+r0_*
+profile-gates*
+shadow-gate*
+e1-*
+prevbyte-*
+sparse-*
+line-*
+direct-*
+model-*
+hashed-*
+hugepage-*
+individual-*
+order16-*
+context-*
+bigram-*
+tier16-*
+ram4g-*
+ramtrue-*
+remap1m-*
+fastmodel-*
+fastfull-*
+ndebug-*
+test_*
+
+# Python caches
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -3,11 +3,12 @@
 Match::Match(const std::vector<unsigned char>& history,
     const unsigned long long& byte_context, const unsigned int& bit_context,
     int limit, float delta, unsigned long long map_size,
-    unsigned long long* longest_match) : history_(history),
+    unsigned long long* longest_match, unsigned int min_match_length) : history_(history),
     byte_context_(byte_context), bit_context_(bit_context), history_pos_(0),
     cur_match_(0), cur_byte_(0), bit_pos_(128), match_length_(0),
-    longest_match_(longest_match), limit_(limit),delta_(delta),
-    divisor_(1.0 / (limit + delta)), map_(map_size, 0) {
+    longest_match_(longest_match), limit_(limit), delta_(delta),
+    divisor_(1.0 / (limit + delta)), min_match_length_(min_match_length),
+    map_(map_size, 0) {
   for (int i = 0; i < 256; ++i) {
     predictions_[i] = 0.5 + (i + 0.5) / 512;
   }
@@ -15,8 +16,13 @@ Match::Match(const std::vector<unsigned char>& history,
 }
 
 const std::valarray<float>& Match::Predict() const {
-  if (cur_byte_ & bit_pos_) outputs_[0] = predictions_[match_length_];
-  else outputs_[0] = 1 - predictions_[match_length_];
+  if (match_length_ < min_match_length_) {
+    outputs_[0] = 0.5f;
+  } else if (cur_byte_ & bit_pos_) {
+    outputs_[0] = predictions_[match_length_];
+  } else {
+    outputs_[0] = 1 - predictions_[match_length_];
+  }
   return outputs_;
 }
 

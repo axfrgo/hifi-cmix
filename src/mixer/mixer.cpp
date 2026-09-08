@@ -5,7 +5,18 @@
 #include <numeric>
 #include <utility>
 #include <math.h>
+#include <immintrin.h>
 #include <sys/resource.h>
+
+static inline float HorizontalSum256(__m256 v) {
+  __m128 lo = _mm256_castps256_ps128(v);
+  __m128 hi = _mm256_extractf128_ps(v, 1);
+  __m128 s = _mm_add_ps(lo, hi);
+  s = _mm_hadd_ps(s, s);
+  s = _mm_hadd_ps(s, s);
+  return _mm_cvtss_f32(s);
+}
+
 Mixer::Mixer(const std::valarray<float>& inputs,
     const std::valarray<float>& extra_inputs,
     const unsigned long long& context, float learning_rate,
@@ -47,10 +58,34 @@ float Mixer::Mix() {
   // machinery in the hottest generic mixer path.
   const float* const inputs = &inputs_[0];
   const float* const weights = &data->weights[0];
-  float p = 0;
+  float p = 0.0f;
+#if defined(__AVX2__)
+  __m256 sum0 = _mm256_setzero_ps();
+  __m256 sum1 = _mm256_setzero_ps();
+  unsigned int i = 0;
+  for (; i + 15 < inputs_size_; i += 16) {
+    __m256 in0 = _mm256_loadu_ps(&inputs[i]);
+    __m256 wt0 = _mm256_loadu_ps(&weights[i]);
+    sum0 = _mm256_fmadd_ps(in0, wt0, sum0);
+
+    __m256 in1 = _mm256_loadu_ps(&inputs[i + 8]);
+    __m256 wt1 = _mm256_loadu_ps(&weights[i + 8]);
+    sum1 = _mm256_fmadd_ps(in1, wt1, sum1);
+  }
+  for (; i + 7 < inputs_size_; i += 8) {
+    __m256 in = _mm256_loadu_ps(&inputs[i]);
+    __m256 wt = _mm256_loadu_ps(&weights[i]);
+    sum0 = _mm256_fmadd_ps(in, wt, sum0);
+  }
+  p = HorizontalSum256(_mm256_add_ps(sum0, sum1));
+  for (; i < inputs_size_; ++i) {
+    p += inputs[i] * weights[i];
+  }
+#else
   for (unsigned int i = 0; i < inputs_size_; ++i) {
     p += inputs[i] * weights[i];
   }
+#endif
   p_ = p;
   // for (unsigned int i = 0; i < extra_inputs_.size(); ++i) {
   //   extra_inputs_[i] = extra_inputs_vec_[i];
@@ -90,9 +125,34 @@ void Mixer::Perceive(int bit) {
 
   float* const weights = &data->weights[0];
   const float* const inputs = &inputs_[0];
+#if defined(__AVX2__)
+  const __m256 upd256 = _mm256_set1_ps(update);
+  unsigned int i = 0;
+  for (; i + 15 < inputs_size_; i += 16) {
+    __m256 in0 = _mm256_loadu_ps(&inputs[i]);
+    __m256 wt0 = _mm256_loadu_ps(&weights[i]);
+    wt0 = _mm256_fnmadd_ps(upd256, in0, wt0);
+    _mm256_storeu_ps(&weights[i], wt0);
+
+    __m256 in1 = _mm256_loadu_ps(&inputs[i + 8]);
+    __m256 wt1 = _mm256_loadu_ps(&weights[i + 8]);
+    wt1 = _mm256_fnmadd_ps(upd256, in1, wt1);
+    _mm256_storeu_ps(&weights[i + 8], wt1);
+  }
+  for (; i + 7 < inputs_size_; i += 8) {
+    __m256 in = _mm256_loadu_ps(&inputs[i]);
+    __m256 wt = _mm256_loadu_ps(&weights[i]);
+    wt = _mm256_fnmadd_ps(upd256, in, wt);
+    _mm256_storeu_ps(&weights[i], wt);
+  }
+  for (; i < inputs_size_; ++i) {
+    weights[i] -= update * inputs[i];
+  }
+#else
   for (unsigned int i = 0; i < inputs_size_; ++i) {
     weights[i] -= update * inputs[i];
   }
+#endif
   if (extra_inputs_size_ != 0) {
     float* const extra_weights = &data->extra_weights[0];
     const float* const extra_inputs = &extra_inputs_vec_[0];

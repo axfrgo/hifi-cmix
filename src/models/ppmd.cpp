@@ -45,9 +45,20 @@ typedef unsigned long long qword;
 // This will reduce RAM usage, but will be slower as well. *Warning*: this will
 // write a *lot* of data to disk, so can reduce the lifespan of SSDs. Not
 // recommended for normal usage.
-bool mmap_to_disk = true;
+#ifndef CMIX_PPMD_MMAP_TO_DISK
+#define CMIX_PPMD_MMAP_TO_DISK 1
+#endif
+
+// Keep the recorded disk-backed behavior by default. Development builds can
+// set this to 0 to use an anonymous, demand-zero mapping for a bounded PPMD
+// heap, removing file page faults without changing the initialized model bytes.
+bool mmap_to_disk = CMIX_PPMD_MMAP_TO_DISK != 0;
 qword mmap_size;
+#ifdef __linux__
+static constexpr char mmap_path[] = "/var/tmp/cmix_ppm.temp";
+#else
 static constexpr char mmap_path[] = "ppm.temp";
+#endif
 
 // Disk-backed PPM keeps the 14GB heap outside anonymous RAM, but pages still
 // count in RSS while resident.  Periodic MADV_DONTNEED calls drop that
@@ -55,8 +66,21 @@ static constexpr char mmap_path[] = "ppm.temp";
 #ifndef CMIX_PPMD_REMAP_INTERVAL
 #define CMIX_PPMD_REMAP_INTERVAL 5000ULL
 #endif
+// A larger interval reduces the number of MADV_DONTNEED calls and associated
+// refaults on disk-backed runs.  This is a residency policy only: the PPMD
+// heap bytes, pointers, and update schedule are unchanged, so predictions
+// remain bit-identical.  Keep the default conservative for the reference
+// build; benchmark overrides must verify RSS and archive identity.
 static constexpr unsigned long long kMmapRemapIntervalBytes =
     CMIX_PPMD_REMAP_INTERVAL;
+
+// Optional transparent huge-page advice for the pointer-heavy PPM heap.  It
+// changes only virtual-memory page layout; the mapped bytes and all model
+// decisions remain unchanged.  Keep disabled by default because allocation
+// latency and host THP policy vary between machines.
+#ifndef CMIX_PPMD_HUGEPAGE
+#define CMIX_PPMD_HUGEPAGE 0
+#endif
 
 const int ORealMAX=256;
 
@@ -182,9 +206,23 @@ int StartSubAllocator( qword SASize ) {
     if (madvise(HeapStart, t, MADV_RANDOM) != 0) {
       exit(EXIT_FAILURE);
     }
+#if CMIX_PPMD_HUGEPAGE
+    // Best-effort: some kernels reject huge-page advice for file mappings.
+    // Never make a valid compression run fail because the hint is unsupported.
+    (void)madvise(HeapStart, t, MADV_HUGEPAGE);
+#endif
     close(fd);
   } else {
-    HeapStart = new byte[t];
+    // Anonymous mappings start zero-filled on demand, matching ftruncate()'s
+    // initial file contents while avoiding a multi-gigabyte eager memset.
+    HeapStart = (byte*)mmap(NULL, t, PROT_READ|PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (HeapStart == MAP_FAILED) {
+      exit(EXIT_FAILURE);
+    }
+#if CMIX_PPMD_HUGEPAGE
+    (void)madvise(HeapStart, t, MADV_HUGEPAGE);
+#endif
   }
 
   if( HeapStart==NULL ) return 0;
@@ -212,7 +250,10 @@ qword GetUsedMemory() {
 }
 
 void StopSubAllocator() {
-  if( SubAllocatorSize ) SubAllocatorSize=0, delete[] HeapStart;
+  if( SubAllocatorSize ) {
+    munmap(HeapStart, SubAllocatorSize);
+    SubAllocatorSize=0;
+  }
 
 }
 
@@ -1395,6 +1436,7 @@ void ppmd_UpdateByte( uint c ) {
 unsigned long long counter_ = 0;
 unsigned long long last_mmap_remap_counter_ = 0;
 
+#if CMIX_PPMD_ENABLED && !CMIX_FAST_BYTE_MODEL
 static void DropPpmHeapResidency(ppmd_Model* ppmd_model) {
   // MADV_DONTNEED clears present PTEs for the shared file mapping and drops
   // them from VmRSS. Later faults reload the same bytes from ppm.temp/page
@@ -1403,29 +1445,83 @@ static void DropPpmHeapResidency(ppmd_Model* ppmd_model) {
     exit(EXIT_FAILURE);
   }
 }
+#endif
 
 PPMD::PPMD(int order, int memory, const unsigned int& bit_context,
-    const std::vector<bool>& vocab) : ByteModel(vocab), byte_(bit_context) {
+    const std::vector<bool>& vocab) : ByteModel(vocab)
+#if CMIX_PPMD_ENABLED || CMIX_FAST_BYTE_MODEL
+    , byte_(bit_context)
+#endif
+{
+#if !CMIX_PPMD_ENABLED
+  // Macro ablation: retain a decoder-synchronized permitted-byte prior but do
+  // not allocate or update the adaptive PPMD tree.  This is an experiment,
+  // not the default codec; the surrounding bit coder remains lossless.
+  unsigned int allowed = 0;
+  for (unsigned int i = 0; i < 256; ++i) allowed += vocab_[i] ? 1U : 0U;
+  if (allowed != 0) {
+    for (unsigned int i = 0; i < 256; ++i) {
+      probs_[i] = vocab_[i] ? 1.0f / static_cast<float>(allowed) : 0.0f;
+    }
+  }
+  return;
+#endif
+#if CMIX_FAST_BYTE_MODEL
+  // A uniform permitted-byte prior is available before the first update.
+  // Keep all initialization deterministic and decoder-local.
+  for (unsigned int previous = 0; previous < 256; ++previous) {
+    unsigned int total = 0;
+    for (unsigned int value = 0; value < 256; ++value) {
+      const unsigned short count = vocab_[value] ? 1 : 0;
+      fast_counts_[previous][value] = count;
+      total += count;
+    }
+    fast_totals_[previous] = total;
+  }
+  for (unsigned int value = 0; value < 256; ++value) {
+    probs_[value] = vocab_[value] ? 1.0f : 0.0f;
+  }
+#else
   tree_zero_.fill(0);
   tree_total_.fill(0);
   vocab_full_ = true;
   for (int i = 0; i < 256; ++i) {
     if (!vocab_[i]) {
       disabled_bytes_.push_back(static_cast<unsigned char>(i));
+#if CMIX_PPMD_PRECOMPUTE_PATHS
+      DisabledBytePath path{};
+      path.value = static_cast<unsigned char>(i);
+      for (int path_index = 0; path_index < 8; ++path_index) {
+        const int bit_index = 8 - path_index;
+        path.node[path_index] =
+            static_cast<unsigned char>((256 + i) >> bit_index);
+        path.bit[path_index] =
+            static_cast<unsigned char>((i >> (bit_index - 1)) & 1);
+      }
+      disabled_paths_.push_back(path);
+#endif
       vocab_full_ = false;
     }
   }
   ppmd_model_.reset(new ppmd_Model());
   ppmd_model_->Init(order,memory,1,0);
+#endif
 }
 
 PPMD::~PPMD() {
+#if !CMIX_FAST_BYTE_MODEL
   if (mmap_to_disk) {
     remove(mmap_path);
   }
+#endif
 }
 
 std::valarray<float>& PPMD::Predict() {
+#if !CMIX_PPMD_ENABLED
+  return ByteModel::Predict();
+#elif CMIX_FAST_BYTE_MODEL
+  return ByteModel::Predict();
+#else
   const unsigned int total = tree_total_[tree_context_];
   if (total == 0) {
     return ByteModel::Predict();
@@ -1433,14 +1529,58 @@ std::valarray<float>& PPMD::Predict() {
   outputs_[0] = static_cast<float>(total - tree_zero_[tree_context_]) /
       static_cast<float>(total);
   return outputs_;
+#endif
 }
 
 void PPMD::Perceive(int bit) {
   ByteModel::Perceive(bit);
+#if !CMIX_PPMD_ENABLED
+  return;
+#else
   tree_context_ = (tree_context_ << 1) | static_cast<unsigned int>(bit);
+#endif
 }
 
 void PPMD::ByteUpdate() {
+#if !CMIX_PPMD_ENABLED
+  ByteModel::ByteUpdate();
+  const float total = probs_.sum();
+  if (total > 0.0f) probs_ /= total;
+  return;
+#else
+#if CMIX_PPMD_UPDATE_PERIOD > 1
+  // Update scheduling ablation: retain the previous byte distribution on
+  // skipped boundaries, but always reset the bit/byte state. Both sides make
+  // this decision from the same decoded byte count, so synchronization stays
+  // exact while the adaptive tree is touched less often.
+  ++update_counter_;
+  if ((update_counter_ % CMIX_PPMD_UPDATE_PERIOD) != 0) {
+    ByteModel::ByteUpdate();
+    tree_context_ = 1;
+    return;
+  }
+#endif
+#if CMIX_FAST_BYTE_MODEL
+  const unsigned int value = byte_ & 255U;
+  auto& counts = fast_counts_[fast_previous_byte_];
+  unsigned int& total = fast_totals_[fast_previous_byte_];
+  if (vocab_[value]) {
+    if (counts[value] != 65535U) {
+      ++counts[value];
+      ++total;
+    }
+  }
+  fast_previous_byte_ = value;
+  const auto& next_counts = fast_counts_[fast_previous_byte_];
+  const unsigned int next_total = fast_totals_[fast_previous_byte_];
+  for (unsigned int i = 0; i < 256; ++i) {
+    probs_[i] = (vocab_[i] && next_total != 0) ?
+        static_cast<float>(next_counts[i]) / static_cast<float>(next_total) :
+        0.0f;
+  }
+  ByteModel::ByteUpdate();
+  return;
+#else
   ++counter_;
   ppmd_model_->ppmd_UpdateByte(byte_);
   ppmd_model_->ppmd_PrepareByte();
@@ -1449,6 +1589,22 @@ void PPMD::ByteUpdate() {
     tree_total_[i] = ppmd_model_->trT[i];
   }
   if (!vocab_full_) {
+#if CMIX_PPMD_PRECOMPUTE_PATHS
+    for (const DisabledBytePath& path : disabled_paths_) {
+      const unsigned int mass = ppmd_model_->sqp[path.value] ?
+          ppmd_model_->sqp[path.value] : 1U;
+      for (int path_index = 0; path_index < 8; ++path_index) {
+        const unsigned int node = path.node[path_index];
+        const unsigned int bit = path.bit[path_index];
+        if (tree_total_[node] >= mass) tree_total_[node] -= mass;
+        else tree_total_[node] = 0;
+        if (bit == 0) {
+          if (tree_zero_[node] >= mass) tree_zero_[node] -= mass;
+          else tree_zero_[node] = 0;
+        }
+      }
+    }
+#else
     for (unsigned char c : disabled_bytes_) {
       const unsigned int mass = ppmd_model_->sqp[c] ? ppmd_model_->sqp[c] : 1U;
       for (int bit_index = 8; bit_index != 0; --bit_index) {
@@ -1462,6 +1618,7 @@ void PPMD::ByteUpdate() {
         }
       }
     }
+#endif
   }
   for (int i = 0; i < 256; ++i) {
     probs_[i] = ppmd_model_->sqp[i];
@@ -1476,6 +1633,8 @@ void PPMD::ByteUpdate() {
       last_mmap_remap_counter_ = counter_;
     }
   }
+#endif
+#endif
 }
 
 } // namespace PPMD

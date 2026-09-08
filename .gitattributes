@@ -1,0 +1,12 @@
+# Auto-detect text files and ensure LF line endings on checkout
+* text=auto eol=lf
+
+# Explicitly ensure bash scripts and data files use LF
+*.sh text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+makefile text eol=lf
+*.md text eol=lf
+*.dic text eol=lf
+*.py text eol=lf

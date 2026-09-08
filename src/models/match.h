@@ -11,7 +11,7 @@ class Match : public Model {
   Match(const std::vector<unsigned char>& history,
     const unsigned long long& byte_context, const unsigned int& bit_context_,
     int limit, float delta, unsigned long long map_size,
-    unsigned long long* longest_match);
+    unsigned long long* longest_match, unsigned int min_match_length = 0);
   const std::valarray<float>& Predict() const;
   void Perceive(int bit);
   void ByteUpdate();
@@ -25,6 +25,7 @@ class Match : public Model {
   unsigned long long* longest_match_;
   int limit_;
   float delta_, divisor_;
+  unsigned int min_match_length_;
   std::vector<unsigned int> map_;
   std::array<float, 256> predictions_;
   std::array<int, 256> counts_;

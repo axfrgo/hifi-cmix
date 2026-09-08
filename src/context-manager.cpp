@@ -186,6 +186,7 @@ void ContextManager::UpdateWRTContext() {
     wrt_context_ += bit_context_;
     if (wrt_context_ > 0xFFEFCF) wrt_context_ = 0;
   }
+  wrt_phase_context_ = wrt_state_;
 }
 
 void ContextManager::UpdateContexts(int bit) {
@@ -206,6 +207,8 @@ void ContextManager::UpdateContexts(int bit) {
     UpdateHistory();
     UpdateWords();
     UpdateRecentBytes();
+    bigram_context_ = (recent_bytes_[0] << 8) | recent_bytes_[1];
+    line_byte_context_ = (line_class_ << 8) | recent_bytes_[0];
     UpdateWRTContext();
 
     for (auto& context : context_hash_contexts_) {

@@ -61,6 +61,9 @@ struct ContextManager {
   void UpdateLineState(unsigned char c);
 
   unsigned int bit_context_ = 1, wrt_state_ = 0, bpos=0;
+  // Separate stable-width key for the opt-in WRT-phase mixer.  The original
+  // binary state remains unchanged; Mixer stores a reference to this field.
+  unsigned long long wrt_phase_context_ = 0;
   unsigned long long long_bit_context_ = 1, zero_context_ = 0, history_pos_ = 0,
       line_break_ = 0, longest_match_ = 0, auxiliary_context_ = 0,
       wrt_context_ = 0,
@@ -87,6 +90,8 @@ struct ContextManager {
       ind5=0,context1_ind5=0,
       mx19cxt=0;
   unsigned int line_class_ = 0, line_prefix_hash_ = 0;
+  unsigned long long bigram_context_ = 0;
+  unsigned long long line_byte_context_ = 0;
   std::vector<unsigned char> history_, shared_map_;
   std::vector<unsigned long long> words_, recent_bytes_;
   llvm::SmallVector<ContextHash, 12> context_hash_contexts_;

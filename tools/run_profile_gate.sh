@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bounded macro-profile gate. Run from an Administrator Ubuntu shell.
+# This intentionally refuses large inputs; it is not a full enwik9 runner.
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+INPUT=${1:-$ROOT/prof_input/input2}
+OUTDIR=${2:-$ROOT/profile-gates}
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "missing input: $INPUT" >&2
+  exit 2
+fi
+SIZE=$(stat -c '%s' "$INPUT")
+if (( SIZE > 20000000 )); then
+  echo "refusing input larger than 20,000,000 bytes: $SIZE" >&2
+  exit 2
+fi
+
+mkdir -p "$OUTDIR"
+PPMD_ORDER=${PPMD_ORDER:-16}
+PPMD_MEMORY_MB=${PPMD_MEMORY_MB:-64}
+SEED=${SEED:-923}
+PPMD_ENABLED=${PPMD_ENABLED:-1}
+PPMD_UPDATE_PERIOD=${PPMD_UPDATE_PERIOD:-1}
+PPMD_HUGEPAGE=${PPMD_HUGEPAGE:-0}
+PPMD_MMAP_TO_DISK=${PPMD_MMAP_TO_DISK:-0}
+PPMD_REMAP_INTERVAL=${PPMD_REMAP_INTERVAL:-5000}
+E1_SIMD_SCAN=${E1_SIMD_SCAN:-1}
+EXTRA_PREVBYTE_DIRECT=${EXTRA_PREVBYTE_DIRECT:-0}
+EXTRA_BIGRAM_DIRECT=${EXTRA_BIGRAM_DIRECT:-0}
+EXTRA_LINEBYTE_DIRECT=${EXTRA_LINEBYTE_DIRECT:-0}
+EXTRA_HASHED_NGRAM=${EXTRA_HASHED_NGRAM:-0}
+EXTRA_LONG_MATCH=${EXTRA_LONG_MATCH:-0}
+EXTRA_MATCH_CONTEXT2=${EXTRA_MATCH_CONTEXT2:-0}
+EXTRA_LINE_MATCH=${EXTRA_LINE_MATCH:-0}
+EXTRA_SPARSE_MATCH=${EXTRA_SPARSE_MATCH:-0}
+EXTRA_CONDITIONAL_EXPERT=${EXTRA_CONDITIONAL_EXPERT:-0}
+SHADOW_TRACE=${SHADOW_TRACE:-0}
+MODEL_TRACE=${MODEL_TRACE:-0}
+BASE="-DSEED=$SEED -DUPDATE_LIMIT=3000 -DPPMD_ORDER=$PPMD_ORDER -DPPMD_MEMORY_MB=$PPMD_MEMORY_MB -DCMIX_PPMD_ENABLED=$PPMD_ENABLED -DCMIX_PPMD_UPDATE_PERIOD=$PPMD_UPDATE_PERIOD -DCMIX_PPMD_HUGEPAGE=$PPMD_HUGEPAGE -DCMIX_PPMD_MMAP_TO_DISK=$PPMD_MMAP_TO_DISK -DCMIX_PPMD_REMAP_INTERVAL=$PPMD_REMAP_INTERVAL -DCMIX_E1_RECENT_CACHE=0 -DCMIX_INLINE_CONTEXT_MIX=0 -DCMIX_INLINE_DIRECT_STATE=0 -DCMIX_E1_SIMD_SCAN=$E1_SIMD_SCAN -DCMIX_EXTRA_PREVBYTE_DIRECT=$EXTRA_PREVBYTE_DIRECT -DCMIX_EXTRA_BIGRAM_DIRECT=$EXTRA_BIGRAM_DIRECT -DCMIX_EXTRA_LINEBYTE_DIRECT=$EXTRA_LINEBYTE_DIRECT -DCMIX_EXTRA_HASHED_NGRAM=$EXTRA_HASHED_NGRAM -DCMIX_EXTRA_LONG_MATCH=$EXTRA_LONG_MATCH -DCMIX_EXTRA_MATCH_CONTEXT2=$EXTRA_MATCH_CONTEXT2 -DCMIX_EXTRA_LINE_MATCH=$EXTRA_LINE_MATCH -DCMIX_EXTRA_SPARSE_MATCH=$EXTRA_SPARSE_MATCH -DCMIX_EXTRA_CONDITIONAL_EXPERT=$EXTRA_CONDITIONAL_EXPERT -DCMIX_SHADOW_TRACE=$SHADOW_TRACE -DCMIX_MODEL_TRACE=$MODEL_TRACE"
+PROFILES=${PROFILE_LIST:-"0 1 2 3"}
+
+for profile in $PROFILES; do
+  echo "=== profile $profile ==="
+  make -C "$ROOT" clean
+  make -C "$ROOT" -j1 cmix CFLAGS_DEFINES="$BASE -DCMIX_PROFILE=$profile"
+  cp "$ROOT/cmix" "$OUTDIR/cmix-profile-$profile"
+  CMIX_SHADOW_TRACE_PATH="$OUTDIR/profile-$profile.shadow.tsv" \
+  CMIX_MODEL_TRACE_PATH="$OUTDIR/profile-$profile.model.tsv" \
+  CMIX_MODEL_TRACE_SCOPE="profile-$profile bounded gate" \
+  CMIX_MODEL_TRACE_COVERAGE_BYTES="$SIZE" \
+  /usr/bin/time -v "$ROOT/cmix" -c "$INPUT" "$OUTDIR/profile-$profile.comp" \
+    >"$OUTDIR/profile-$profile.encode.stdout" 2>"$OUTDIR/profile-$profile.encode.time"
+  /usr/bin/time -v "$ROOT/cmix" -d "$OUTDIR/profile-$profile.comp" "$OUTDIR/profile-$profile.out" \
+    >"$OUTDIR/profile-$profile.decode.stdout" 2>"$OUTDIR/profile-$profile.decode.time"
+  cmp -s "$INPUT" "$OUTDIR/profile-$profile.out"
+  wc -c "$OUTDIR/profile-$profile.comp" | tee "$OUTDIR/profile-$profile.size"
+  sha256sum "$INPUT" "$OUTDIR/profile-$profile.out" | tee "$OUTDIR/profile-$profile.sha256"
+done
+
+echo "completed bounded profile gate: $INPUT ($SIZE bytes)"
