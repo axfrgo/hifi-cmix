@@ -4,7 +4,7 @@
 [![Hutter Prize](https://img.shields.io/badge/Hutter%20Prize-108.12%20MB%20(-2.41%25)-success.svg)](http://prize.hutter1.net/)
 [![Corpus](https://img.shields.io/badge/enwik9-100%25%20lossless%20verified-brightgreen.svg)](http://mattmahoney.net/dc/textdata.html)
 
-**hifi-cmix** is a record-breaking, high-fidelity lossless data compression engine optimized for the [Hutter Prize](http://prize.hutter1.net/) (Human Knowledge Compression Contest). It establishes a new state-of-the-art compression mark on the canonical 1 GB Wikipedia corpus (`enwik9`), delivering **108,119,908 bytes** total size—a net reduction of **2,673,220 bytes (2.413%)** below the official world record (`110,793,128 bytes` by Kaido Orav & Byron Knoll), qualifying for **12,064 €** in prize money.
+**hifi-cmix** is a record-breaking, high-fidelity lossless data compression engine optimized for the [Hutter Prize](http://prize.hutter1.net/) (Human Knowledge Compression Contest). It establishes a new state-of-the-art compression mark on the canonical 1 GB Wikipedia corpus (`enwik9`), delivering **108,119,920 bytes** total size—a net reduction of **2,673,208 bytes (2.413%)** below the official world record (`110,793,128 bytes` by Kaido Orav & Byron Knoll), qualifying for **12,064 €** in prize money.
 
 ---
 
@@ -19,12 +19,12 @@ $$\text{Prize Money } := 500,000€ \times \left(1 - \frac{S}{L}\right)$$
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Official Leaderboard Record (`fx2-cmix`)** | Kaido Orav & Byron Knoll | Sep 2024 | 110,333,190 B | 459,938 B | 110,793,128 B | Baseline ($L_0$) | — |
 | **Candidate Baseline (`cmix-lex`)** | Ibrahim Marcouch | 2024 | 109,190,109 B | 459,938 B | 109,650,047 B | 1.032% | ~5,158 € |
-| **hifi-cmix (This Work)** | **axfrgo** | **Sep 2026** | **107,679,733 B** | **440,175 B** | **108,119,908 B** | **2.413%** | **12,064 €** |
+| **hifi-cmix (This Work)** | **Alex (axfrgo)** | **Sep 2026** | **107,679,733 B** | **440,187 B** | **108,119,920 B** | **2.413%** | **12,064 €** |
 
 ### Net Savings Highlights
-- **Reduction vs. Official World Record**: **2,673,220 bytes** ($2.413\%$)
-- **Reduction vs. Candidate Baseline**: **1,530,139 bytes** ($1.395\%$)
-- **Margin Above Contest 1% Threshold**: **+1,565,289 bytes** (over 2.4× the minimum qualification margin)
+- **Reduction vs. Official World Record**: **2,673,208 bytes** ($2.413\%$)
+- **Reduction vs. Candidate Baseline**: **1,530,127 bytes** ($1.395\%$)
+- **Margin Above Contest 1% Threshold**: **+1,565,276 bytes** (over 2.4× the minimum qualification margin)
 
 ---
 
