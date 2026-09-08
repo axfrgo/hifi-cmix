@@ -143,13 +143,15 @@ sha256sum data9
 
 ---
 
-## 6. Authors & Acknowledgments
+## 6. Author & Prior Work Acknowledgments
 
-`hifi-cmix` builds upon decades of pioneering algorithmic research in lossless data compression:
-- **Kaido Orav & Byron Knoll**: Creators of `fx2-cmix`, `fx-cmix`, and authors of the official 2024 record.
+- **Author**: **Alex ([axfrgo](https://github.com/axfrgo))** — Developed entity redirect clustering, Regime-1 tail permutation optimization, AVX2 neural mixer vectorization, disk-backed PPM paging tuning, and release engineering for `hifi-cmix`.
+
+### Prior Research & Lineage
+`hifi-cmix` builds upon prior open-source work in the PAQ/cmix lineage:
+- **Ibrahim Marcouch**: Upstream author of `cmix-lex` (2024).
+- **Kaido Orav & Byron Knoll**: Creators of `fx2-cmix` and `fx-cmix` (2024 record).
 - **Matt Mahoney**: Creator of the PAQ series, zpaq, and original cmix foundation.
-- **Ibrahim Marcouch**: Creator of `cmix-lex` and the PHDA9 structured tail reordering framework.
-- **axfrgo**: Entity redirect clustering, Regime-1 tail permutation optimization, AVX2 vectorized neural mixer, PPM paging optimizations, and release engineering.
 
 ---
 
